@@ -51,7 +51,7 @@ fun DuenoScreen(
     // ── DATA SIMULADA PARA RONY ──
     val esRony = negocioId == "negocio-rony-123"
     val negocioState = if (esRony) {
-        remember { mutableStateOf(Negocio(negocioId, "Negocio de Rony", "Calle Lux 777", 0.0, 0.0, 100, 35, "api-rony")) }
+        repository.observeNegocio(negocioId).collectAsState(initial = Negocio(negocioId, "Negocio de Rony", "Calle Lux 777", 0.0, 0.0, 100, 0, 0, 0, "api-rony", true))
     } else {
         repository.observeNegocio(negocioId).collectAsState(initial = null)
     }
@@ -67,6 +67,10 @@ fun DuenoScreen(
 
     val alertas by repository.observeAlertas(negocioId).collectAsState(initial = emptyList())
     var selectedTab by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(negocioId) {
+        repository.iniciarMonitoreoIoT(negocioId)
+    }
     
     val tabs = listOf(
         Triple("Status", Icons.Default.Dashboard, 0),
@@ -75,7 +79,11 @@ fun DuenoScreen(
         Triple("Excel", Icons.Default.Description, 3)
     )
 
-    Column(modifier = Modifier.fillMaxSize().background(DarkBg)) {
+    Column(modifier = Modifier
+        .fillMaxSize()
+        .background(DarkBg)
+        .statusBarsPadding() // Añade espacio para la barra de estado superior
+    ) {
         // App Bar con estilo Glass
         Surface(
             modifier = Modifier.fillMaxWidth(),
@@ -224,7 +232,34 @@ fun DashboardTabPremium(negocio: Negocio?, registros: List<RegistroAforo> = empt
 
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                MetricCard("Disponible", "${negocio.aforoMaximo - negocio.aforoActual}", Teal, Modifier.weight(1f))
+                MetricCard("Entradas", "${negocio.totalEntradas}", Teal, Modifier.weight(1f))
+                MetricCard("Salidas", "${negocio.totalSalidas}", Color(0xFFFF6B6B), Modifier.weight(1f))
+            }
+        }
+
+        if (negocio.aforoActual > 0) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF2D1515)),
+                    border = BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.3f))
+                ) {
+                    Row(modifier = Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Warning, null, tint = Color(0xFFFF5252))
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text("ADVERTENCIA DE SEGURIDAD", fontWeight = FontWeight.Black, color = Color(0xFFFF5252), fontSize = 12.sp)
+                            Text("Discrepancia detectada: ${negocio.aforoActual} personas aún en el local.", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                MetricCard("Disponible", "${(negocio.aforoMaximo - negocio.aforoActual).coerceAtLeast(0)}", Teal, Modifier.weight(1f))
                 MetricCard("Capacidad", "${negocio.aforoMaximo}", TextSecondary, Modifier.weight(1f))
             }
         }
@@ -284,14 +319,30 @@ fun DesignerBarChart(registros: List<RegistroAforo>) {
 @Composable
 fun MetricCard(label: String, value: String, color: Color, modifier: Modifier) {
     Card(
-        modifier = modifier,
+        modifier = modifier.shadow(8.dp, RoundedCornerShape(20.dp), spotColor = color.copy(alpha = 0.2f)),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = DarkCard),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.05f))
+        border = BorderStroke(1.dp, color.copy(alpha = 0.1f))
     ) {
-        Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(value, fontSize = 32.sp, fontWeight = FontWeight.Black, color = color)
-            Text(label, fontSize = 11.sp, color = TextSecondary, fontWeight = FontWeight.Bold)
+        Column(
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                value,
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Black,
+                color = color,
+                letterSpacing = (-1).sp
+            )
+            Text(
+                label.uppercase(),
+                fontSize = 9.sp,
+                color = TextSecondary,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = 1.sp
+            )
         }
     }
 }

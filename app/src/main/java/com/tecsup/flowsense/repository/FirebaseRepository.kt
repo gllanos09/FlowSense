@@ -23,7 +23,8 @@ import kotlinx.coroutines.tasks.await
 class FirebaseRepository(context: Context) {
 
     private val auth = FirebaseAuth.getInstance()
-    private val db = FirebaseDatabase.getInstance().reference
+    private val databaseUrl = "https://flowsense-30b81-default-rtdb.firebaseio.com/"
+    private val db = FirebaseDatabase.getInstance(databaseUrl).reference
     private val database = FlowSenseDatabase.getDatabase(context)
     private val negocioDao = database.negocioDao()
     private val usuarioDao = database.usuarioDao()
@@ -138,6 +139,84 @@ class FirebaseRepository(context: Context) {
         } catch (e: Exception) {
             // Si falla Firebase, retornamos éxito porque ya está en Room
             Result.success(id)
+        }
+    }
+
+    // ── MONITOREO IoT (ESP8266) ─────────────────────────
+
+    fun iniciarMonitoreoIoT(negocioId: String) {
+        val refEntrada = FirebaseDatabase.getInstance().getReference("Negocio/Entrada")
+        val refSalida = FirebaseDatabase.getInstance().getReference("Negocio/Salida")
+        
+        android.util.Log.d("FlowSenseIoT", "Iniciando monitoreo IoT para negocio: $negocioId")
+
+        refEntrada.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val valor = snapshot.getValue()?.toString()?.toIntOrNull() ?: 0
+                android.util.Log.d("FlowSenseIoT", "Cambio en Entrada: $valor")
+                if (valor == 1) {
+                    actualizarAforoIoT(negocioId, true)
+                    refEntrada.setValue(0)
+                }
+            }
+            override fun onCancelled(error: DatabaseError) {
+                android.util.Log.e("FlowSenseIoT", "Error en Entrada: ${error.message}")
+            }
+        })
+
+        refSalida.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val valor = snapshot.getValue()?.toString()?.toIntOrNull() ?: 0
+                android.util.Log.d("FlowSenseIoT", "Cambio en Salida: $valor")
+                if (valor == 1) {
+                    actualizarAforoIoT(negocioId, false)
+                    refSalida.setValue(0)
+                }
+            }
+            override fun onCancelled(error: DatabaseError) {
+                android.util.Log.e("FlowSenseIoT", "Error en Salida: ${error.message}")
+            }
+        })
+    }
+
+    private fun actualizarAforoIoT(negocioId: String, esEntrada: Boolean) {
+        scope.launch {
+            try {
+                // Obtenemos el negocio actual de Firebase para consistencia
+                val snapshot = db.child("negocios").child(negocioId).get().await()
+                val negocio = snapshot.getValue(Negocio::class.java) ?: return@launch
+                
+                val nuevoAforo = if (esEntrada) {
+                    negocio.aforoActual + 1
+                } else {
+                    (negocio.aforoActual - 1).coerceAtLeast(0)
+                }
+
+                val nuevasEntradas = if (esEntrada) negocio.totalEntradas + 1 else negocio.totalEntradas
+                val nuevasSalidas = if (!esEntrada) negocio.totalSalidas + 1 else negocio.totalSalidas
+
+                val actualizado = negocio.copy(
+                    aforoActual = nuevoAforo,
+                    totalEntradas = nuevasEntradas,
+                    totalSalidas = nuevasSalidas
+                )
+
+                db.child("negocios").child(negocioId).setValue(actualizado).await()
+                
+                // Registrar evento en el historial
+                val registroId = db.child("registros").child(negocioId).push().key ?: ""
+                val registro = RegistroAforo(
+                    id = registroId,
+                    negocioId = negocioId,
+                    tipo = if (esEntrada) "ENTRADA" else "SALIDA",
+                    aforoActual = nuevoAforo,
+                    timestamp = System.currentTimeMillis()
+                )
+                db.child("registros").child(negocioId).child(registroId).setValue(registro).await()
+                
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 

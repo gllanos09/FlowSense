@@ -39,6 +39,10 @@ class MainActivity : ComponentActivity() {
                     if (session != null) {
                         userRol = session.rol
                         userNegocioId = session.negocioId
+                        // Si es dueño de Rony, forzar el ID correcto para monitoreo
+                        if (session.email == "rony@gmail.com") {
+                            userNegocioId = "negocio-rony-123"
+                        }
                         currentScreen = if (session.rol == "ADMIN") "admin" else "dueno"
                     } else {
                         currentScreen = "login"
