@@ -9,7 +9,7 @@ import com.tecsup.flowsense.model.Negocio
 import com.tecsup.flowsense.model.RegistroAforo
 import com.tecsup.flowsense.model.Usuario
 
-@Database(entities = [Negocio::class, Usuario::class, Alerta::class, RegistroAforo::class], version = 1, exportSchema = false)
+@Database(entities = [Negocio::class, Usuario::class, Alerta::class, RegistroAforo::class], version = 3, exportSchema = false)
 abstract class FlowSenseDatabase : RoomDatabase() {
     abstract fun negocioDao(): NegocioDao
     abstract fun usuarioDao(): UsuarioDao
@@ -24,7 +24,8 @@ abstract class FlowSenseDatabase : RoomDatabase() {
                     context.applicationContext,
                     FlowSenseDatabase::class.java,
                     "flowsense_db"
-                ).build()
+                ).fallbackToDestructiveMigration()
+                    .build()
                 INSTANCE = instance
                 instance
             }

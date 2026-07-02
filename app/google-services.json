@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "587115348546",
-    "project_id": "flowsense-30b81",
-    "storage_bucket": "flowsense-30b81.firebasestorage.app"
+    "project_number": "593410827332",
+    "project_id": "flowsense-final",
+    "storage_bucket": "flowsense-final.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:587115348546:android:19060de44fd4a8b1ba63db",
+        "mobilesdk_app_id": "1:593410827332:android:96951370b5f53edf5b0811",
         "android_client_info": {
           "package_name": "com.tecsup.flowsense"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": ""
+          "current_key": "AIzaSyAIKXIf1xKq4Sk06DoCVYfoYHhMBF1Xy6w"
         }
       ],
       "services": {

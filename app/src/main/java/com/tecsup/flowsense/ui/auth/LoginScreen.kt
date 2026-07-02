@@ -49,13 +49,13 @@ fun LoginScreen(
             .background(DarkBg),
         contentAlignment = Alignment.Center
     ) {
-        // Efecto visual de fondo: Aura de marca
+        // Efecto visual de fondo: Aura de marca (Ajustada para que no vuele)
         Box(
             modifier = Modifier
-                .size(400.dp)
-                .offset(y = (-300).dp)
-                .background(Teal.copy(alpha = 0.08f), RoundedCornerShape(1000.dp))
-                .blur(100.dp)
+                .size(240.dp)
+                .offset(y = (-100).dp)
+                .background(Teal.copy(alpha = 0.03f), RoundedCornerShape(1000.dp))
+                .blur(40.dp)
         )
 
         Column(
@@ -146,17 +146,22 @@ fun LoginScreen(
                     Button(
                         onClick = {
                             scope.launch {
-                                val cleanEmail = email.trim()
-                                if (cleanEmail == "admin@gmail.com" && password == "123456") {
-                                    repository.saveLocalSession(Usuario("admin-id", "Admin", cleanEmail, "ADMIN", ""))
-                                    onLoginSuccess("ADMIN", "")
-                                    return@launch
+                                val cleanEmail = email.trim().lowercase()
+                                
+                                // Shortcut de Login para pruebas
+                                when {
+                                    (cleanEmail == "admin" || cleanEmail == "admin@gmail.com") && password == "123456" -> {
+                                        repository.saveLocalSession(Usuario("admin-id", "Admin", "admin", "123456", "ADMIN", ""))
+                                        onLoginSuccess("ADMIN", "")
+                                        return@launch
+                                    }
+                                    (cleanEmail == "rony" || cleanEmail == "rony@gmail.com") && password == "123456" -> {
+                                        repository.saveLocalSession(Usuario("rony-id", "Rony", "rony", "123456", "DUENO", "negocio-rony-123"))
+                                        onLoginSuccess("DUENO", "negocio-rony-123")
+                                        return@launch
+                                    }
                                 }
-                                if (cleanEmail == "rony@gmail.com" && password == "123456") {
-                                    repository.saveLocalSession(Usuario("rony-id", "Rony", cleanEmail, "DUENO", "negocio-rony-123"))
-                                    onLoginSuccess("DUENO", "negocio-rony-123")
-                                    return@launch
-                                }
+
                                 isLoading = true
                                 errorMsg = ""
                                 val result = repository.login(cleanEmail, password)

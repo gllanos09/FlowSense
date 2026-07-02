@@ -14,6 +14,7 @@ data class Negocio(
     val aforoActual: Int = 0,
     val totalEntradas: Int = 0,
     val totalSalidas: Int = 0,
+    val diaActivo: Boolean = false,
     val apiKey: String = "",
     val synced: Boolean = true
 )

@@ -22,8 +22,7 @@ import kotlinx.coroutines.tasks.await
 
 class FirebaseRepository(context: Context) {
 
-    private val auth = FirebaseAuth.getInstance()
-    private val databaseUrl = "https://flowsense-30b81-default-rtdb.firebaseio.com/"
+    private val databaseUrl = "https://flowsense-final-default-rtdb.firebaseio.com/"
     private val db = FirebaseDatabase.getInstance(databaseUrl).reference
     private val database = FlowSenseDatabase.getDatabase(context)
     private val negocioDao = database.negocioDao()
@@ -59,19 +58,20 @@ class FirebaseRepository(context: Context) {
         }
     }
 
-    // ── AUTH ──────────────────────────────────────────
+    // ── AUTH (DATABASE BASED) ─────────────────────────
 
-    suspend fun login(email: String, password: String): Result<Usuario> {
+    suspend fun login(username: String, pass: String): Result<Usuario> {
         return try {
-            val result = auth.signInWithEmailAndPassword(email, password).await()
-            val uid = result.user?.uid ?: ""
-            val usuario = getUsuario(uid)
+            val snapshot = db.child("usuarios").get().await()
+            val usuario = snapshot.children.mapNotNull { it.getValue(Usuario::class.java) }
+                .find { it.email == username && it.password == pass }
+            
             if (usuario != null) {
                 usuarioDao.clearAll()
                 usuarioDao.insert(usuario)
                 Result.success(usuario)
             } else {
-                Result.failure(Exception("Usuario no encontrado"))
+                Result.failure(Exception("Credenciales inválidas"))
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -86,29 +86,26 @@ class FirebaseRepository(context: Context) {
     }
 
     fun logout() {
-        auth.signOut()
         scope.launch { usuarioDao.clearAll() }
     }
 
-    fun getCurrentUserId() = auth.currentUser?.uid
-
-    suspend fun getUsuario(uid: String): Usuario? {
+    suspend fun getUsuario(username: String): Usuario? {
         return try {
-            val snapshot = db.child("usuarios").child(uid).get().await()
-            snapshot.getValue(Usuario::class.java)
+            val snapshot = db.child("usuarios").get().await()
+            snapshot.children.mapNotNull { it.getValue(Usuario::class.java) }
+                .find { it.email == username }
         } catch (e: Exception) {
             null
         }
     }
 
     suspend fun getUsuarioActual(): Usuario? {
-        return getUsuario(getCurrentUserId() ?: "")
+        return getLocalSession()
     }
 
     // ── NEGOCIOS ──────────────────────────────────────
 
     fun observeNegocios(): Flow<List<Negocio>> {
-        // Side effect: Sincronizar desde Firebase a local
         db.child("negocios").addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val lista = snapshot.children.mapNotNull {
@@ -122,6 +119,16 @@ class FirebaseRepository(context: Context) {
     }
 
     fun observeNegocio(negocioId: String): Flow<Negocio?> {
+        // Sincronizar este negocio específico desde Firebase
+        db.child("negocios").child(negocioId).addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val negocio = snapshot.getValue(Negocio::class.java)?.copy(id = snapshot.key ?: "", synced = true)
+                if (negocio != null) {
+                    scope.launch { negocioDao.insert(negocio) }
+                }
+            }
+            override fun onCancelled(error: DatabaseError) {}
+        })
         return negocioDao.observeNegocio(negocioId)
     }
 
@@ -145,82 +152,128 @@ class FirebaseRepository(context: Context) {
     // ── MONITOREO IoT (ESP8266) ─────────────────────────
 
     fun iniciarMonitoreoIoT(negocioId: String) {
-        val refEntrada = FirebaseDatabase.getInstance().getReference("Negocio/Entrada")
-        val refSalida = FirebaseDatabase.getInstance().getReference("Negocio/Salida")
+        // Usar la referencia de base de datos con URL explícita para evitar desincronización
+        val refEntrada = FirebaseDatabase.getInstance(databaseUrl).getReference("Negocio/Entrada")
+        val refSalida = FirebaseDatabase.getInstance(databaseUrl).getReference("Negocio/Salida")
         
-        android.util.Log.d("FlowSenseIoT", "Iniciando monitoreo IoT para negocio: $negocioId")
+        android.util.Log.d("FlowSenseIoT", "Iniciando monitoreo IoT Global en: $databaseUrl")
 
         refEntrada.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val valor = snapshot.getValue()?.toString()?.toIntOrNull() ?: 0
-                android.util.Log.d("FlowSenseIoT", "Cambio en Entrada: $valor")
                 if (valor == 1) {
-                    actualizarAforoIoT(negocioId, true)
-                    refEntrada.setValue(0)
+                    actualizarAforoIoT(true)
+                    refEntrada.setValue(0) // Resetear sensor
                 }
             }
-            override fun onCancelled(error: DatabaseError) {
-                android.util.Log.e("FlowSenseIoT", "Error en Entrada: ${error.message}")
-            }
+            override fun onCancelled(error: DatabaseError) {}
         })
 
         refSalida.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val valor = snapshot.getValue()?.toString()?.toIntOrNull() ?: 0
-                android.util.Log.d("FlowSenseIoT", "Cambio en Salida: $valor")
                 if (valor == 1) {
-                    actualizarAforoIoT(negocioId, false)
-                    refSalida.setValue(0)
+                    actualizarAforoIoT(false)
+                    refSalida.setValue(0) // Resetear sensor
                 }
             }
-            override fun onCancelled(error: DatabaseError) {
-                android.util.Log.e("FlowSenseIoT", "Error en Salida: ${error.message}")
-            }
+            override fun onCancelled(error: DatabaseError) {}
         })
     }
 
-    private fun actualizarAforoIoT(negocioId: String, esEntrada: Boolean) {
+    private fun actualizarAforoIoT(esEntrada: Boolean) {
         scope.launch {
             try {
-                // Obtenemos el negocio actual de Firebase para consistencia
-                val snapshot = db.child("negocios").child(negocioId).get().await()
-                val negocio = snapshot.getValue(Negocio::class.java) ?: return@launch
-                
-                val nuevoAforo = if (esEntrada) {
-                    negocio.aforoActual + 1
-                } else {
-                    (negocio.aforoActual - 1).coerceAtLeast(0)
+                val snapshot = db.child("negocios").get().await()
+                snapshot.children.forEach { child ->
+                    val key = child.key ?: return@forEach
+                    val negocio = child.getValue(Negocio::class.java)?.copy(id = key)
+                    if (negocio != null && negocio.diaActivo) {
+                        val nuevoAforo = if (esEntrada) {
+                            negocio.aforoActual + 1
+                        } else {
+                            (negocio.aforoActual - 1).coerceAtLeast(0)
+                        }
+
+                        val nuevasEntradas = if (esEntrada) negocio.totalEntradas + 1 else negocio.totalEntradas
+                        val nuevasSalidas = if (!esEntrada) negocio.totalSalidas + 1 else negocio.totalSalidas
+
+                        val updates = mapOf(
+                            "aforoActual" to nuevoAforo,
+                            "totalEntradas" to nuevasEntradas,
+                            "totalSalidas" to nuevasSalidas
+                        )
+                        
+                        db.child("negocios").child(key).updateChildren(updates)
+
+                        // Registrar evento en el historial
+                        val registroId = db.child("registros").child(key).push().key ?: ""
+                        val registro = RegistroAforo(
+                            id = registroId,
+                            negocioId = key,
+                            tipo = if (esEntrada) "ENTRADA" else "SALIDA",
+                            aforoActual = nuevoAforo,
+                            timestamp = System.currentTimeMillis()
+                        )
+                        db.child("registros").child(key).child(registroId).setValue(registro)
+                    }
                 }
-
-                val nuevasEntradas = if (esEntrada) negocio.totalEntradas + 1 else negocio.totalEntradas
-                val nuevasSalidas = if (!esEntrada) negocio.totalSalidas + 1 else negocio.totalSalidas
-
-                val actualizado = negocio.copy(
-                    aforoActual = nuevoAforo,
-                    totalEntradas = nuevasEntradas,
-                    totalSalidas = nuevasSalidas
-                )
-
-                db.child("negocios").child(negocioId).setValue(actualizado).await()
-                
-                // Registrar evento en el historial
-                val registroId = db.child("registros").child(negocioId).push().key ?: ""
-                val registro = RegistroAforo(
-                    id = registroId,
-                    negocioId = negocioId,
-                    tipo = if (esEntrada) "ENTRADA" else "SALIDA",
-                    aforoActual = nuevoAforo,
-                    timestamp = System.currentTimeMillis()
-                )
-                db.child("registros").child(negocioId).child(registroId).setValue(registro).await()
-                
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
     }
 
+    suspend fun setDiaEstado(negocioId: String, activo: Boolean) {
+        try {
+            // Actualizar el estado en Firebase para que Room lo reciba vía listener
+            db.child("negocios").child(negocioId).child("diaActivo").setValue(activo).await()
+            
+            if (!activo) {
+                // Al terminar el día, reseteamos contadores locales del negocio
+                val updates = mapOf(
+                    "aforoActual" to 0,
+                    "totalEntradas" to 0,
+                    "totalSalidas" to 0
+                )
+                db.child("negocios").child(negocioId).updateChildren(updates).await()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("FlowSense", "Error al cambiar estado: ${e.message}")
+        }
+    }
+
     // ── USUARIOS ──────────────────────────────────────
+
+    fun observeUsuarios(): Flow<List<Usuario>> = callbackFlow {
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val lista = snapshot.children.mapNotNull { it.getValue(Usuario::class.java) }
+                trySend(lista)
+            }
+            override fun onCancelled(error: DatabaseError) {}
+        }
+        db.child("usuarios").addValueEventListener(listener)
+        awaitClose { db.child("usuarios").removeEventListener(listener) }
+    }
+
+    suspend fun eliminarUsuario(uid: String) {
+        try {
+            db.child("usuarios").child(uid).removeValue().await()
+        } catch (e: Exception) {}
+    }
+
+    suspend fun actualizarUsuario(uid: String, nombre: String) {
+        try {
+            db.child("usuarios").child(uid).child("nombre").setValue(nombre).await()
+        } catch (e: Exception) {}
+    }
+
+    suspend fun actualizarAforoMaximo(negocioId: String, nuevoMax: Int) {
+        try {
+            db.child("negocios").child(negocioId).child("aforoMaximo").setValue(nuevoMax).await()
+        } catch (e: Exception) {}
+    }
 
     suspend fun registrarAdmin(
         email: String,
@@ -228,17 +281,17 @@ class FirebaseRepository(context: Context) {
         nombre: String
     ): Result<String> {
         return try {
-            val result = auth.createUserWithEmailAndPassword(email, password).await()
-            val uid = result.user?.uid ?: ""
+            val id = db.child("usuarios").push().key ?: ""
             val usuario = Usuario(
-                id = uid,
+                id = id,
                 nombre = nombre,
-                email = email,
+                email = email, // Username
+                password = password,
                 rol = "ADMIN",
                 negocioId = ""
             )
-            db.child("usuarios").child(uid).setValue(usuario).await()
-            Result.success(uid)
+            db.child("usuarios").child(id).setValue(usuario).await()
+            Result.success(id)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -251,18 +304,17 @@ class FirebaseRepository(context: Context) {
         negocioId: String
     ): Result<String> {
         return try {
-            val result = auth.createUserWithEmailAndPassword(email, password).await()
-            val uid = result.user?.uid ?: ""
-            result.user?.sendEmailVerification()?.await()
+            val id = db.child("usuarios").push().key ?: ""
             val usuario = Usuario(
-                id = uid,
+                id = id,
                 nombre = nombre,
-                email = email,
+                email = email, // Username
+                password = password,
                 rol = "DUENO",
                 negocioId = negocioId
             )
-            db.child("usuarios").child(uid).setValue(usuario).await()
-            Result.success(uid)
+            db.child("usuarios").child(id).setValue(usuario).await()
+            Result.success(id)
         } catch (e: Exception) {
             Result.failure(e)
         }
